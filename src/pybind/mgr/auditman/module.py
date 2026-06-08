@@ -1,4 +1,5 @@
 import json
+from pybind.mgr.mgr_module import CLICommandBase, Option
 import time
 import errno
 import logging
@@ -6,7 +7,7 @@ import sqlite3
 from collections import deque
 from dataclasses import dataclass, astuple
 from threading import Thread, Lock, Condition
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from .cli import AuditManCLICommand
 
@@ -84,12 +85,12 @@ class AuditEntry:
 
 
 class Module(MgrModule):
-    CLICommand = AuditManCLICommand
+    CLICommand: CLICommandBase = AuditManCLICommand
     MODULE_OPTIONS: List[Option] = []
     NOTIFY_TYPES = [NotifyType.audit]
     MON_AUDIT_CMD_NS = '.mon.ns'
 
-    MODULE_OPTIONS = [
+    MODULE_OPTIONS: List[Option] = [
         {
             "name": "retention_days",
             "type": "int",
@@ -171,7 +172,7 @@ class Module(MgrModule):
                     entity: Optional[str] = None):
         return self.show_audit_records(limit, entity)
 
-    def show_audit_records(self, limit, entity):
+    def show_audit_records(self, limit, entity) -> tuple[Literal[0], str, Literal['']] | tuple[int, Literal[''], str]:
         query = """
         SELECT timestamp, user, user_host, entity_name, command,
         args, retval, sequence, epoch, state FROM audit_commands """
@@ -342,3 +343,11 @@ class Module(MgrModule):
         # already subscribes to log-info, but with starting
         # seq 0.
         self.get_last_recorded_epoch()
+
+# TO DO:
+# implement map class -> MonMap
+# change notify() to get mon map from cluster and save persistently
+    # write a querry function, that querries mon cluster, and maybe from native function
+# create db schema for mon map
+# method to write to db
+# method to fetch from db
