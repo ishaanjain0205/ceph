@@ -1,4 +1,7 @@
+from datetime import datetime, timedelta, timezone
 import json
+from sys import audit
+from arrow.python.pyarrow.tests.strategies import map_types
 from pybind.mgr.mgr_module import CLICommandBase, Option
 import time
 import errno
@@ -14,6 +17,31 @@ from .cli import AuditManCLICommand
 from mgr_module import MgrModule, Option, NotifyType
 
 log = logging.getLogger(__name__)
+
+@dataclass(frozen=True)
+class MapEntry:
+    epoch: int
+    map_type: str
+    raw_json: str
+    received_at: datetime # when it was received from monitor (close to cluster change time)
+
+    def to_sqlite_tuple(self) -> tuple:
+        """
+        Returns the data in the exact order required by the
+        INSERT statement.
+        """
+        return astuple(obj=self)
+
+    @classmethod 
+    def from_dict(cls, dumpDict, mapType):
+        now = datetime.now(timezone.utc)
+
+        return cls(
+            epoch=dumpDict["epoch"],
+            map_type=mapType,
+            raw_json=json.dumps(dumpDict),
+            received_at=now,
+        )
 
 
 @dataclass(frozen=True)  # 'frozen' makes it immutable and thread-safe
@@ -38,7 +66,7 @@ class AuditEntry:
         Returns the data in the exact order required by the
         INSERT statement.
         """
-        return astuple(self)
+        return astuple(obj=self)
 
     @classmethod
     def from_native(cls, log_entry):
@@ -86,25 +114,23 @@ class AuditEntry:
 
 class Module(MgrModule):
     CLICommand: CLICommandBase = AuditManCLICommand
-    MODULE_OPTIONS: List[Option] = []
     NOTIFY_TYPES = [NotifyType.audit]
     MON_AUDIT_CMD_NS = '.mon.ns'
-
     MODULE_OPTIONS: List[Option] = [
-        {
+        Option(
             "name": "retention_days",
             "type": "int",
             "default": 30,
             "desc": "Maximum age of audit records in days",
             "runtime": True,
-        },
-        {
+        ),
+        Option(
             "name": "max_records",
             "type": "int",
             "default": 1000000,
             "desc": "Maximum number of records to keep in the database",
             "runtime": True,
-        },
+        ),
     ]
 
     def serve(self):
@@ -116,6 +142,8 @@ class Module(MgrModule):
                 self.apply_retention_policy()
                 last_prune = now
             time.sleep(60)  # Wake up every minute to check for shutdown
+
+        # TODO: add pruning for maps db if needed
 
     def apply_retention_policy(self):
         """Applies both time-based and count-based retention policies."""
@@ -203,16 +231,50 @@ class Module(MgrModule):
                 return (0, json.dumps(results, indent=2), "")
         except Exception as e:
             return (-errno.EINVAL, "", f"Failed to query audit database: {e}")
-
+    
     def notify(self, notify_type: NotifyType, log_entry):
         log.debug(f'notify_type={notify_type}')
-        log.debug(f'logmsg={log_entry.logmsg}')
-        if not notify_type == 'audit':
-            return
-        entry = AuditEntry.from_native(log_entry)
-        with self.qlock:
-            self.q.append(entry.to_sqlite_tuple())
-            self.qcond.notify_all()
+        
+        entry = None
+        if notify_type == NotifyType.audit:
+            log.debug(f'logmsg={log_entry.logmsg}')
+            entry = AuditEntry.from_native(log_entry)
+        else:
+            dump = self.get(notify_type)
+            entry = MapEntry.from_dict(dump, notify_type)
+
+        with self.auditqlock:
+            self.auditq.append(entry.to_sqlite_tuple())
+            self.auditqcond.notify_all()
+
+    def map_recorder(self):
+        INSERT_MAP = '''INSERT INTO maps_history(
+            epoch, map_type, raw_json, received_at)
+            VALUES(?,?,?,?);)'''
+
+        try:
+            self.mapqlock.acquire()
+            while not self.stopping:
+                while not len(self.mapq):
+                    log.debug('map queue empty')
+                    self.mapqcond.wait_for(lambda: len(self.mapq), timeout=1)
+                log.debug(f'have {len(self.mapq)} map records')
+                map_recs = list(self.mapq)
+                self.mapq.clear()
+                self.mapqlock.release()
+                log.debug(f'recording {len(map_recs)} map records')
+                with self.conn_lock:
+                    try:
+                        self.dbconn.execute("BEGIN")
+                        self.dbconn.executemany(INSERT_MAP, map_recs)
+                        self.dbconn.commit()
+                    except Exception as e:
+                        log.error(msg=f'exception: {e}')
+                    finally:
+                        self.dbconn.rollback()
+                        self.mapqlock.acquire()
+        except Exception as e:
+            log.error(f'exception: {e}')
 
     def audit_recorder(self):
         INSERT_AUDIT = '''INSERT INTO audit_commands(
@@ -220,16 +282,17 @@ class Module(MgrModule):
             state, retval, priority,
             sequence, epoch, from_name, from_rank, result_message)
             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);'''
+
         try:
-            self.qlock.acquire()
+            self.auditqlock.acquire()
             while not self.stopping:
-                while not len(self.q):
+                while not len(self.auditq):
                     log.debug('audit queue empty')
-                    self.qcond.wait_for(lambda: len(self.q), timeout=1)
-                log.debug(f'have {len(self.q)} audit records')
-                audit_recs = list(self.q)
-                self.q.clear()
-                self.qlock.release()
+                    self.auditqcond.wait_for(lambda: len(self.auditq), timeout=1)
+                log.debug(f'have {len(self.auditq)} audit records')
+                audit_recs = list(self.auditq)
+                self.auditq.clear()
+                self.auditqlock.release()
                 log.debug(f'recording {len(audit_recs)} audit records')
                 with self.conn_lock:
                     try:
@@ -240,7 +303,7 @@ class Module(MgrModule):
                         log.error(f'exception: {e}')
                     finally:
                         self.dbconn.rollback()
-                        self.qlock.acquire()
+                        self.auditqlock.acquire()
         except Exception as e:
             log.error(f'exception: {e}')
 
@@ -292,6 +355,15 @@ class Module(MgrModule):
             from_rank INT NOT NULL,
             result_message TEXT
         );
+
+        CREATE TABLE IF NOT EXSITS maps_history(
+            map_type TEXT NOT NULL,
+            epoch INTEGER NOT NULL,
+            raw_json BLOB NOT NULL.
+            received_at TEXT NOT NULL,
+            PRIMARY KEY (map_type, epoch)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON
             audit_commands(timestamp);
         CREATE INDEX IF NOT EXISTS idx_audit_epoch_seq ON
@@ -325,19 +397,26 @@ class Module(MgrModule):
         super().__init__(*args, **kwargs)
         # audit queue
         self.dbconn = None
-        self.qlock = Lock()
+        self.auditqlock = Lock()
+        self.auditqcond = Condition(self.auditqlock)
+        self.auditq = deque()
+
+        self.mapqlock = Lock()
+        self.mapqcond = Condition(self.mapqlock)
+        self.mapq = deque()
+
         self.conn_lock = Lock()
-        self.qcond = Condition(self.qlock)
         self.stopping = False
-        self.q = deque()
 
         # basic boilerplate...
         self.create_audit_pool()
         self.init_databases()
 
         # start record loop
-        recorder = Thread(target=self.audit_recorder)
-        recorder.start()
+        auditrecorder = Thread(target=self.audit_recorder)
+        maprecorder = Thread(target=self.map_recorder)
+        auditrecorder.start()
+        maprecorder.start()
 
         # TODO: subscribe with last epoch. Note that ceph-mgr
         # already subscribes to log-info, but with starting

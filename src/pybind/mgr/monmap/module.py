@@ -171,7 +171,6 @@ class Module(MgrModule):
 
     def audit_recorder(self):
 
-
         INSERT_MON_MAP = '''INSERT INTO mon_map(
             epoch, fsid, modified, created, min_mon_release, 
             min_mon_release_name, election_strategy,
@@ -355,3 +354,17 @@ CREATE_TABLES = '''
     )
     '''
 
+
+# build a class for storing maps
+# dataclass maps:
+    # map entry:
+        # unique identifiers
+        # json dump of actual data
+
+# mon_map
+# epoch: version of map
+# fsid: unique cluster id
+# created / modified
+# min_mon_release / min_mon_release_name
+# election_strategy
+# 

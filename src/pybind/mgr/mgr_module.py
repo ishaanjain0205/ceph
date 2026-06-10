@@ -11,6 +11,7 @@ from typing import (
     NamedTuple,
     no_type_check,
     Optional,
+    overload,
     Sequence,
     Set,
     TYPE_CHECKING,
@@ -1037,9 +1038,6 @@ class API:
 
 class MgrModule(ceph_module.BaseMgrModule, MgrModuleLoggingMixin):
     MGR_POOL_NAME = ".mgr"
-    # if this is changed, ensure the cephfs recovery tools
-    # also know about it.
-    AUDIT_POOL_NAME = ".audit"
 
     # Priority definitions for perf counters
     PRIO_CRITICAL = 10
@@ -1235,14 +1233,6 @@ class MgrModule(ceph_module.BaseMgrModule, MgrModuleLoggingMixin):
             self.log.debug("creating new mgr pool")
             self.create_pool(self.MGR_POOL_NAME)
             self.appify_pool(self.MGR_POOL_NAME, 'mgr')
-
-    @API.perm('w')
-    @API.expose
-    def create_audit_pool(self) -> None:
-        if not self.pool_exists(self.AUDIT_POOL_NAME):
-            self.log.debug("creating audit pool")
-            self.create_pool(self.AUDIT_POOL_NAME)
-            self.appify_pool(self.AUDIT_POOL_NAME, 'auditman')
 
     def create_skeleton_schema(self, db: sqlite3.Connection) -> None:
         SQL = [
@@ -1759,6 +1749,26 @@ class MgrModule(ceph_module.BaseMgrModule, MgrModuleLoggingMixin):
         """
         return cast(List[ServerInfoT], self._ceph_get_server(None))
 
+    @overload
+    def get_metadata(self,
+                     svc_type: str,
+                     svc_id: str) -> Optional[Dict[str, str]]:
+        ...
+
+    @overload
+    def get_metadata(self,
+                     svc_type: str,
+                     svc_id: str,
+                     default: None) -> Optional[Dict[str, str]]:
+        ...
+
+    @overload
+    def get_metadata(self,
+                     svc_type: str,
+                     svc_id: str,
+                     default: Dict[str, str]) -> Dict[str, str]:
+        ...
+
     def get_metadata(self,
                      svc_type: str,
                      svc_id: str,
@@ -1768,12 +1778,14 @@ class MgrModule(ceph_module.BaseMgrModule, MgrModuleLoggingMixin):
 
         ceph-mgr fetches metadata asynchronously, so are windows of time during
         addition/removal of services where the metadata is not available to
-        modules.  ``None`` is returned if no metadata is available.
+        modules.  ``None`` is returned if no metadata is available, unless
+        ``default`` is provided, in which case ``default`` is returned.
 
         :param str svc_type: service type (e.g., 'mds', 'osd', 'mon')
         :param str svc_id: service id. convert OSD integer IDs to strings when
             calling this
-        :rtype: dict, or None if no metadata found
+        :param default: value to return when no metadata is available
+        :rtype: dict, or None if no metadata found and no default given
         """
         metadata = self._ceph_get_metadata(svc_type, svc_id)
         if not metadata:
@@ -2713,13 +2725,6 @@ class MgrModule(ceph_module.BaseMgrModule, MgrModuleLoggingMixin):
         :param int query_id: query ID
         """
         return self._ceph_get_mds_perf_counters(query_id)
-
-    def audit_log_subscribe(self, sequence: int) -> None:
-        """
-        Subscribe to cluster audit logs starting from a chosen sequence
-        number.
-        """
-        return self._audit_log_subscribe(sequence)
 
     def get_daemon_health_metrics(self) -> Dict[str, List[Dict[str, Any]]]:
         """
