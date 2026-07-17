@@ -34,27 +34,19 @@ const std::unordered_map<std::string, std::string> TOOL_TO_TABLE_NAME = {
 
 const std::unordered_set<std::string> VALID_FIELDS = {
     "seq",
-    "cmd",
-    "cmd_args",
     "init_time",
-    "comp_time",
-    "status",
-    "retval"
+    "json_dump"
 };
 
 const std::vector<std::string> DEFAULT_FIELDS = {
     "seq",
-    "cmd",
-    "cmd_args",
     "init_time",
-    "comp_time",
-    "status",
-    "retval"
+    "json_dump"
 };
 
 const std::vector<std::string> BRIEF_FIELDS = {
     "seq",
-    "cmd"
+    "init_time"
 };
 
 const std::unordered_set<std::string> VALID_FORMATS = {
@@ -207,18 +199,10 @@ void print_query_result_formatted(
       for (const auto& f : selected_fields) {
         if (f == "seq") {
           table << e.seq;
-        } else if (f == "cmd") {
-          table << e.cmd;
-        } else if (f == "cmd_args") {
-          table << e.cmd_args;
         } else if (f == "init_time") {
           table << format_time(e.init_time);
-        } else if (f == "comp_time") {
-          table << (e.comp_time ? format_time(*e.comp_time) : "");
-        } else if (f == "status") {
-          table << e.status.value_or("");
-        } else if (f == "retval") {
-          table << (e.retval ? std::to_string(*e.retval) : "");
+        } else if (f == "json_dump") {
+          table << e.json_dump;
         }
       }
       table << TextTable::endrow;
@@ -235,20 +219,10 @@ void print_query_result_formatted(
       for (const auto& f : selected_fields) {
         if (f == "seq") {
           jf.dump_unsigned("seq", e.seq);
-        } else if (f == "cmd") {
-          jf.dump_string("cmd", e.cmd);
-        } else if (f == "cmd_args") {
-          jf.dump_string("cmd_args", e.cmd_args);
         } else if (f == "init_time") {
           jf.dump_string("init_time", format_time(e.init_time));
-        } else if (f == "comp_time") {
-          e.comp_time ? jf.dump_string("comp_time", format_time(*e.comp_time))
-                      : jf.dump_null("comp_time");
-        } else if (f == "status") {
-          e.status ? jf.dump_string("status", *e.status)
-                   : jf.dump_null("status");
-        } else if (f == "retval") {
-          e.retval ? jf.dump_int("retval", *e.retval) : jf.dump_null("retval");
+        } else if (f == "json_dump") {
+          jf.dump_string("json_dump", e.json_dump);
         }
       }
       jf.close_section();
@@ -356,17 +330,11 @@ void apply_cli_opts(const po::variables_map& vm, AuditCliConfig& config) {
     config.query.limit = value;
   });
 
-  process_command<std::string>(vm, "status", [&config](const std::string& value) {
-    // TO DO: add error check for valid status values?
-    config.query.status = value;
-  });
-
   process_command<std::string>(
       vm, "order-by", [&config](const std::string& value) {
-        if (value != "seq" && value != "init_time" && value != "comp_time" &&
-            value != "retval") {
+        if (value != "seq" && value != "init_time") {
           throw std::invalid_argument(
-              "--order-by must be in: seq, init_time, comp_time, retval.");
+              "--order-by must be in: seq, init_time.");
         }
         config.query.order_by = value;
       });

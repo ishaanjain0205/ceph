@@ -93,13 +93,20 @@ void ToolsAuditLogger::log_begin(
     return;
   }
   if (begin_recorded) {
-    lderr(cct) << "called while previous being (seq=" << seq_in_flight << ") still in flight; dropping" << dendl;
+    lderr(cct) << "called while previous begin (seq=" << seq_in_flight
+               << ") still in flight; dropping" << dendl;
     return;
   }
-  auto r = db->first_phase_commit(cmd, cmd_args, init_time);
+  std::string json = fmt::format(
+      R"({{"cmd":"{}","cmd_args":"{}","init_time":{}}})",
+      cmd, cmd_args, static_cast<int64_t>(init_time));
+  auto r = db->commit(init_time, json);
   if (r.has_value()) {
-    seq_in_flight = *r;
-    begin_recorded = true;
+    seq_in_flight       = *r;
+    cmd_in_flight       = cmd;
+    cmd_args_in_flight  = cmd_args;
+    init_time_in_flight = init_time;
+    begin_recorded      = true;
   } else {
     lderr(cct) << "failed: code " << static_cast<int>(r.error().code)
                << " detail=" << r.error().detail << dendl;
@@ -114,12 +121,21 @@ void ToolsAuditLogger::log_end(
   if (!is_ready() || !begin_recorded) {
     return;
   }
-  auto r = db->second_phase_commit(seq_in_flight, comp_time, status, retval);
+  std::string json = fmt::format(
+      R"({{"cmd":"{}","cmd_args":"{}","init_time":{},"comp_time":{},"status":"{}","retval":{}}})",
+      cmd_in_flight, cmd_args_in_flight,
+      static_cast<int64_t>(init_time_in_flight),
+      static_cast<int64_t>(comp_time),
+      status, retval);
+  auto r = db->update(seq_in_flight, json);
   if (r.has_value()) {
-    begin_recorded = false;
-    seq_in_flight = 0;
+    begin_recorded      = false;
+    seq_in_flight       = 0;
+    cmd_in_flight       = {};
+    cmd_args_in_flight  = {};
+    init_time_in_flight = 0;
   } else {
-    lderr(cct) << __func__ << "failed: seq=" << seq_in_flight
+    lderr(cct) << "failed: seq=" << seq_in_flight
                << " code=" << static_cast<int>(r.error().code)
                << " detail=" << r.error().detail << dendl;
   }

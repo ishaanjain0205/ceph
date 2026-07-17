@@ -256,10 +256,6 @@ build_where(
     add_condition("init_time <= ?");
     int_binds.push_back({bind_idx++, static_cast<int64_t>(*q.until)});
   }
-  if (q.status) {
-    add_condition("status = ?");
-    text_binds.push_back({bind_idx++, *q.status});
-  }
 
   return where;
 }
@@ -710,7 +706,7 @@ AuditDB::query(const AuditQuery& q)
   std::string where = build_where(q, int_binds, text_binds);
 
   std::string sql =
-      "SELECT seq, cmd, cmd_args, init_time, comp_time, status, retval FROM " +
+      "SELECT seq, init_time, json_dump FROM " +
       table_name + where + " ORDER BY " + order_col + " " + direction +
       " LIMIT ?;";
 
@@ -742,35 +738,11 @@ AuditDB::query(const AuditQuery& q)
 
   while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
     AuditEntry entry;
-    
-    entry.seq = sqlite3_column_int64(stmt, 0);
-    
-    if (sqlite3_column_type(stmt, 1) != SQLITE_NULL) {
-      const char* cmd =
-          reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-      entry.cmd = cmd ? cmd : "";
+    entry.seq       = sqlite3_column_int64(stmt, 0);
+    entry.init_time = static_cast<time_t>(sqlite3_column_int64(stmt, 1));
+    if (const auto* p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2))) {
+      entry.json_dump = p;
     }
-    
-    if (sqlite3_column_type(stmt, 2) != SQLITE_NULL) {
-      const char* cmd_args =
-          reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-      entry.cmd_args = cmd_args ? cmd_args : "";
-    }
-    
-    entry.init_time = static_cast<time_t>(sqlite3_column_int64(stmt, 3));
-
-    if (sqlite3_column_type(stmt, 4) != SQLITE_NULL) {
-      entry.comp_time = static_cast<time_t>(sqlite3_column_int64(stmt, 4));
-    }
-    
-    if (sqlite3_column_type(stmt, 5) != SQLITE_NULL) {
-      entry.status = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
-    }
-    
-    if (sqlite3_column_type(stmt, 6) != SQLITE_NULL) {
-      entry.retval = sqlite3_column_int(stmt, 6);
-    }
-
     results.push_back(std::move(entry));
   }
 

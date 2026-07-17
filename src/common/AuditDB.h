@@ -29,7 +29,7 @@ using sqlite3_ptr = std::unique_ptr<sqlite3, decltype(&sqlite3_close)>;
 struct AuditEntry {
   int64_t     seq{0};
   time_t      init_time{0};
-  std::string data; // json dump of data, differs tool by tool
+  std::string json_dump;
 };
 
 struct AuditQuery {
