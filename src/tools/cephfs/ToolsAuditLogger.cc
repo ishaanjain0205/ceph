@@ -4,6 +4,8 @@
 
 #include <fmt/format.h>
 
+#include "common/JSONFormatter.h"
+
 #include "common/ceph_context.h"
 #include "common/debug.h"
 #include "include/ceph_assert.h"
@@ -97,10 +99,21 @@ void ToolsAuditLogger::log_begin(
                << ") still in flight; dropping" << dendl;
     return;
   }
-  std::string json = fmt::format(
-      R"({{"cmd":"{}","cmd_args":"{}","init_time":{}}})",
-      cmd, cmd_args, static_cast<int64_t>(init_time));
+
+  JSONFormatter jf;
+  jf.open_object_section("");
+  jf.dump_string("cmd",      cmd);
+  jf.dump_string("cmd_args", cmd_args);
+  jf.dump_int("init_time",   static_cast<int64_t>(init_time));
+  jf.dump_null("comp_time");
+  jf.dump_null("status");
+  jf.dump_null("retval");
+  jf.close_section();
+  std::ostringstream ss;
+  jf.flush(ss);
+  std::string json = ss.str();
   auto r = db->commit(init_time, json);
+  
   if (r.has_value()) {
     seq_in_flight       = *r;
     cmd_in_flight       = cmd;
@@ -121,12 +134,18 @@ void ToolsAuditLogger::log_end(
   if (!is_ready() || !begin_recorded) {
     return;
   }
-  std::string json = fmt::format(
-      R"({{"cmd":"{}","cmd_args":"{}","init_time":{},"comp_time":{},"status":"{}","retval":{}}})",
-      cmd_in_flight, cmd_args_in_flight,
-      static_cast<int64_t>(init_time_in_flight),
-      static_cast<int64_t>(comp_time),
-      status, retval);
+  JSONFormatter jf;
+  jf.open_object_section("");
+  jf.dump_string("cmd",      cmd_in_flight);
+  jf.dump_string("cmd_args", cmd_args_in_flight);
+  jf.dump_int("init_time",   static_cast<int64_t>(init_time_in_flight));
+  jf.dump_int("comp_time",   static_cast<int64_t>(comp_time));
+  jf.dump_string("status",   status);
+  jf.dump_int("retval",      static_cast<int64_t>(retval));
+  jf.close_section();
+  std::ostringstream ss;
+  jf.flush(ss);
+  std::string json = ss.str();
   auto r = db->update(seq_in_flight, json);
   if (r.has_value()) {
     begin_recorded      = false;

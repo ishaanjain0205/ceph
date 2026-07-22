@@ -256,6 +256,11 @@ build_where(
     add_condition("init_time <= ?");
     int_binds.push_back({bind_idx++, static_cast<int64_t>(*q.until)});
   }
+  for (const auto& f : q.json_filters) {
+    add_condition("json_extract(json_dump, ?) = ?");
+    text_binds.push_back({bind_idx++, "$." + f.field});
+    text_binds.push_back({bind_idx++, f.value});
+  }
 
   return where;
 }

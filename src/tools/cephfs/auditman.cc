@@ -18,6 +18,7 @@
 #include "common/TextTable.h"
 #include "common/ceph_argparse.h"
 #include "global/global_init.h"
+#include "json_spirit/json_spirit.h"
 
 using std::cerr;
 using std::cout;
@@ -35,7 +36,7 @@ const std::unordered_map<std::string, std::string> TOOL_TO_TABLE_NAME = {
 const std::unordered_set<std::string> VALID_FIELDS = {
     "seq",
     "init_time",
-    "json_dump"
+    "json_dump" 
 };
 
 const std::vector<std::string> DEFAULT_FIELDS = {
@@ -54,10 +55,6 @@ const std::unordered_set<std::string> VALID_FORMATS = {
     "json",
     "json-pretty"
 };
-
-// const std::unordered_set<std::string> VALID_STATUSES = {
-
-// };
 
 // Configuration for the audit query attempt
 struct AuditCliConfig {
@@ -212,24 +209,44 @@ void print_query_result_formatted(
   }
 
   if (format == "json" || format == "json-pretty") {
-    JSONFormatter jf((format == "json-pretty"));
-    jf.open_array_section("audit_entries");
+    json_spirit::Array output;
+
     for (const auto& e : entries) {
-      jf.open_object_section("entry");
-      for (const auto& f : selected_fields) {
-        if (f == "seq") {
-          jf.dump_unsigned("seq", e.seq);
-        } else if (f == "init_time") {
-          jf.dump_string("init_time", format_time(e.init_time));
-        } else if (f == "json_dump") {
-          jf.dump_string("json_dump", e.json_dump);
-        }
+      json_spirit::Value data;
+
+      if (!json_spirit::read(e.json_dump, data)) {
+        throw std::runtime_error(
+            fmt::format(
+                "Invalid json_dump in audit entry seq={}",
+                e.seq));
       }
-      jf.close_section();
+
+      json_spirit::Object entry;
+
+      entry.push_back(json_spirit::Pair(
+          "seq",
+          static_cast<int64_t>(e.seq)));
+
+      entry.push_back(json_spirit::Pair(
+          "init_time",
+          format_time(e.init_time)));
+
+      entry.push_back(json_spirit::Pair(
+          "data",
+          data));
+
+      output.push_back(entry);
     }
-    jf.close_section();
-    jf.flush(cout);
-    cout << endl;
+
+    const json_spirit::Value root(output);
+
+    if (format == "json-pretty") {
+      cout << json_spirit::write_formatted(root) << endl;
+    } else {
+      cout << json_spirit::write(root) << endl;
+    }
+
+    return;
   }
 }
 
@@ -329,6 +346,20 @@ void apply_cli_opts(const po::variables_map& vm, AuditCliConfig& config) {
     }
     config.query.limit = value;
   });
+
+  if (vm.count("filter")) {
+    for (const auto& raw : vm["filter"].as<std::vector<std::string>>()) {
+      const auto eq = raw.find('=');
+      if (eq == std::string::npos || eq == 0) {
+        throw std::invalid_argument(
+            "Invalid --filter value: '" + raw +
+            "'. Expected format: field=value");
+      }
+      std::string field = raw.substr(0, eq);
+      std::string value = raw.substr(eq + 1);
+      config.query.json_filters.push_back({std::move(field), std::move(value)});
+    }
+  }
 
   process_command<std::string>(
       vm, "order-by", [&config](const std::string& value) {
@@ -438,8 +469,9 @@ int main(int argc, const char** argv) {
     ("range", po::value<std::string>(), "Get entries between timestamp range \"YYYY-MM-DD\",\"YYYY-MM-DD\"")
     ("last", po::value<double>(), "Get entries from the last N hours (supports decimals, e.g. 0.5 for last 30 mins).")
     ("recent", po::value<int64_t>(), "Get last n recent entries (in DESC order by default).")
-    ("status", po::value<std::string>(), "Get entries with status s.") // TO DO: Ensure these are just success, failure, timeout or completed, unkown error, aborted
-    ("order-by", po::value<std::string>(), "Order returned entries by a specific field")        
+    ("filter", po::value<std::vector<std::string>>()->composing(),
+        "Filter by a json_dump field: field=value (repeatable, e.g. --filter status=ok --filter cmd=data-scan).")
+    ("order-by", po::value<std::string>(), "Order returned entries by a specific field")
     ("order", po::value<std::string>()->default_value("DESC"), "Specify ASC or DESC ordering (default order is DESC)")
     ("count", po::bool_switch(&config.count_mode), "Get count of entries that match filters.")
     ("fields", po::value<std::string>(), "Specify one or more fields to retrieve.")
@@ -503,5 +535,4 @@ int main(int argc, const char** argv) {
   return 0;
 }
 
-// TO DO: Integrate status error checking
 // TO DO: command arguments (filter command that were run with --yes-i-really-really-mean-it flag)

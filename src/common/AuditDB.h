@@ -32,6 +32,23 @@ struct AuditEntry {
   std::string json_dump;
 };
 
+/**
+ * A single equality filter on a json_dump field.
+ *
+ * @p field is the JSON field name e.g. "status", "cmd", "event".
+ * @p value is the string value to match against.
+ *
+ * AuditDB internally prepends "$." to @p field and emits:
+ *   json_extract(json_dump, '$.<field>') = ?
+ * Both are bound parameters — AuditDB never interprets the field name.
+ * If the field does not exist in a row's json_dump, json_extract returns
+ * NULL and the row is silently excluded (same as a non-matching WHERE).
+ */
+struct JsonFilter {
+  std::string field;  // e.g. "status", "cmd", "event"
+  std::string value;  // e.g. "ok", "data-scan"
+};
+
 struct AuditQuery {
   // seq-based filtering
   std::optional<int64_t> before_seq;
@@ -41,15 +58,14 @@ struct AuditQuery {
   std::optional<time_t> since;
   std::optional<time_t> until;
 
-  // TODO: json_dump content filters — vector of {path, value} pairs that
-  // emit json_extract(json_dump, ?) = ? in the WHERE clause, allowing
-  // callers to filter on arbitrary fields inside json_dump without AuditDB
-  // needing to know the per-channel JSON schema.
-  // std::vector<JsonFilter> json_filters;
+  // json_dump content filters — each emits:
+  //   json_extract(json_dump, '$.<field>') = ?
+  // callers map CLI flags to these; AuditDB stays schema-agnostic
+  std::vector<JsonFilter> json_filters;
 
   // sorting — only structural columns: "seq" or "init_time"
   std::string order_by = "init_time";
-  bool ascending{false};
+  bool        ascending{false};
 
   // pagination
   int64_t limit{100};
