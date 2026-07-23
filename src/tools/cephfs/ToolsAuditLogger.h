@@ -90,7 +90,7 @@ public:
       time_t init_time);
 
   /**
-   * Record the completion of a tool invocation. Builds an enriched JSON
+   * Record the completion of a tool invocation. Builds a JSON
    * payload containing cmd, cmd_args, init_time, comp_time, status, and
    * retval, then updates the existing row via @ref AuditDB::update.
    */

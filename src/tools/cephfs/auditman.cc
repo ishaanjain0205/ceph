@@ -39,7 +39,7 @@ const std::unordered_set<std::string> VALID_FORMATS = {
     "json-pretty"
 };
 
-// Configuration for the AuditDB::query attempt
+// Configuration for query attempt
 struct AuditCliConfig {
   AuditQuery query;
   std::string table_name;
@@ -78,7 +78,6 @@ time_t str_to_time_t(const std::string& str_time) {
   } else if (date_and_time) {
     ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
   }
-
   if (ss.fail()) {
     throw std::invalid_argument(date_error);
   }
@@ -177,7 +176,6 @@ void print_query_result_formatted(
 
     for (const auto& e : entries) {
       json_spirit::Value data;
-
       if (!json_spirit::read(e.json_dump, data)) {
         throw std::runtime_error(
             fmt::format(
@@ -199,7 +197,6 @@ void print_query_result_formatted(
     }
 
     const json_spirit::Value root(output);
-
     if (format == "json-pretty") {
       cout << json_spirit::write_formatted(root) << endl;
     } else {
@@ -210,7 +207,7 @@ void print_query_result_formatted(
   }
 }
 
-// Helper to error check and build AuditDB query with all cli options specified
+// Helper to error check cli options and build AuditQuery based on input
 void apply_cli_opts(const po::variables_map& vm, AuditCliConfig& config) {
   if (vm.count("range") &&
       (vm.count("since") || vm.count("until") || vm.count("last"))) {
@@ -333,7 +330,7 @@ void apply_cli_opts(const po::variables_map& vm, AuditCliConfig& config) {
   if (vm.count("order-by")) {
     const std::string& order_by = vm["order-by"].as<std::string>();
     if (order_by != "seq" && order_by != "init_time") {
-      throw std::invalid_argument("--order-by must be in: seq, init_time.");
+      throw std::invalid_argument("--order-by must be seq or init_time.");
     }
     config.query.order_by = order_by;
   }
@@ -360,9 +357,9 @@ void do_audit_query(AuditDB& db, const AuditCliConfig& config) {
     if (!count_res) {
       const auto& error = count_res.error();
       throw std::runtime_error(
-          fmt::format(
-              "Failed to count audit entries. Code: {}, Detail: {}",
-              static_cast<int>(error.code), error.detail));
+        fmt::format(
+          "Failed to count audit entries. Code: {}, Detail: {}",
+                static_cast<int>(error.code), error.detail));
     }
     print_count_result_formatted(config.format, count_res.value());
     return;
@@ -401,37 +398,54 @@ int main(int argc, const char** argv) {
   AuditCliConfig config;
   po::options_description query_opts("Query Options");
   query_opts.add_options()
-    ("tool-name", po::value<std::string>()->required(), "Tool name (channel you want to query).")
-    ("limit", po::value<int64_t>(), "Maximum number of entries to return.")
-    ("before-seq", po::value<int64_t>(), "Get entries before seq number n.")
-    ("after-seq", po::value<int64_t>(), "Get entries after seq number n.")
-    ("since", po::value<std::string>(), "Get entries since timestamp \"YYYY-MM-DD\" or \"YYYY-MM-DD HH:MM:SS\" .")
-    ("until", po::value<std::string>(), "Get entries until timestamp \"YYYY-MM-DD\" or \"YYYY-MM-DD HH:MM:SS\" .")
-    ("range", po::value<std::string>(), "Get entries between timestamp range \"YYYY-MM-DD\",\"YYYY-MM-DD\"")
-    ("last", po::value<double>(), "Get entries from the last N hours (supports decimals, e.g. 0.5 for last 30 mins).")
-    ("recent", po::value<int64_t>(), "Get last n recent entries (in DESC order by default).")
+    ("tool-name", po::value<std::string>()->required(),
+        "The audit channel to query (e.g. cephfs-data-scan).")
+    ("limit", po::value<int64_t>(),
+        "Cap the number of rows returned.")
+    ("before-seq", po::value<int64_t>(),
+        "Return only entries whose seq number is less than N.")
+    ("after-seq", po::value<int64_t>(),
+        "Return only entries whose seq number is greater than N.")
+    ("since", po::value<std::string>(),
+        "Return entries recorded on or after this timestamp. "
+        "Format: \"YYYY-MM-DD\" or \"YYYY-MM-DD HH:MM:SS\".")
+    ("until", po::value<std::string>(),
+        "Return entries recorded on or before this timestamp. "
+        "Format: \"YYYY-MM-DD\" or \"YYYY-MM-DD HH:MM:SS\".")
+    ("range", po::value<std::string>(),
+        "Return entries within an inclusive timestamp range. "
+        "Format: \"YYYY-MM-DD,YYYY-MM-DD\" or \"YYYY-MM-DD HH:MM:SS,YYYY-MM-DD HH:MM:SS\". "
+        "Cannot be combined with --since, --until, or --last.")
+    ("last", po::value<double>(),
+        "Return entries from the last N hours before now. "
+        "Accepts decimals (e.g. 0.5 for the last 30 minutes).")
+    ("recent", po::value<int64_t>(),
+        "Return the N most recent entries, ordered by init_time descending.")
     ("filter", po::value<std::vector<std::string>>()->composing(),
-        "Filter by a json_dump field: field=value (repeatable, e.g. --filter status=ok --filter cmd=data-scan).")
-    ("order-by", po::value<std::string>(), "Order returned entries by a specific field")
-    ("order", po::value<std::string>()->default_value("DESC"), "Specify ASC or DESC ordering (default order is DESC)")
-    ("count", po::bool_switch(&config.count_mode), "Get count of entries that match filters.")
-    ("format", po::value<std::string>(&config.format)->default_value("plain"), 
-        "Specify output format: plain (default), json, json-pretty.")
+        "Filter results by a field inside the json_dump column. "
+        "Format: field=value. Repeatable for multiple filters "
+        "(e.g. --filter status=ok --filter cmd=data-scan).")
+    ("order-by", po::value<std::string>(),
+        "Column to sort results by. Valid values: seq, init_time.")
+    ("order", po::value<std::string>()->default_value("DESC"),
+        "Sort direction: ASC or DESC (default: DESC).")
+    ("count", po::bool_switch(&config.count_mode),
+        "Print the number of matching entries.")
+    ("format", po::value<std::string>(&config.format)->default_value("plain"),
+        "Output format: plain (default), json, json-pretty.")
   ;
 
   // Visible options for help output
   po::options_description visible("Allowed options");
   visible.add(general).add(query_opts);
   
-  // Process cli options and build AuditCliConfig (Audit DB query)
+  // Process cli options and build AuditCliConfig (AuditDB's AuditQuery)
   po::variables_map vm;
   try {
     po::store(po::parse_command_line(argc, argv, visible), vm);
     if (vm.count("help")) {
       cout << "Usage: auditman --tool-name <tool> [query-options]\n\n";
-      cout << "Query audit records stored in AuditDB for a specific tool "
-              "(channel).\n\n";
-
+      cout << "Query audit records stored in AuditDB for a specific channel.\n\n";
       cout << "Supported tools:\n";
       for (const auto& [tool_name, table_name] : TOOL_TO_TABLE_NAME) {
         cout << "  " << tool_name << "\n";

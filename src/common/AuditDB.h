@@ -40,9 +40,6 @@ struct AuditEntry {
  *
  * AuditDB internally prepends "$." to @p field and emits:
  *   json_extract(json_dump, '$.<field>') = ?
- * Both are bound parameters — AuditDB never interprets the field name.
- * If the field does not exist in a row's json_dump, json_extract returns
- * NULL and the row is silently excluded (same as a non-matching WHERE).
  */
 struct JsonFilter {
   std::string field;  // e.g. "status", "cmd", "event"
