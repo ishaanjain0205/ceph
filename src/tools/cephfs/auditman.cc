@@ -8,7 +8,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
-#include <vector>
 
 #include <boost/program_options.hpp>
 #include <fmt/format.h>
