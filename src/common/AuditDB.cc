@@ -253,11 +253,11 @@ build_where(
     int_binds.push_back({bind_idx++, static_cast<int64_t>(*q.since)});
   }
   if (q.until) {
-    add_condition("init_time <= ?");
+    add_condition("init_time < ?");
     int_binds.push_back({bind_idx++, static_cast<int64_t>(*q.until)});
   }
   for (const auto& f : q.json_filters) {
-    add_condition("json_extract(json_dump, ?) = ?");
+    add_condition("CAST(json_extract(json_dump, ?) AS TEXT) = ?");
     text_binds.push_back({bind_idx++, "$." + f.field});
     text_binds.push_back({bind_idx++, f.value});
   }

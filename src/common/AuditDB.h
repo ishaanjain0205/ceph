@@ -54,14 +54,12 @@ struct AuditQuery {
   std::optional<int64_t> before_seq;
   std::optional<int64_t> after_seq;
 
-  // time-based filtering (seconds since epoch)
+  // time-based filtering
   std::optional<time_t> since;
   std::optional<time_t> until;
 
-  // json_dump content filters — each emits:
-  //   json_extract(json_dump, '$.<field>') = ?
-  // callers map CLI flags to these; AuditDB stays schema-agnostic
-  std::vector<JsonFilter> json_filters;
+  // json_dump field filters
+   std::vector<JsonFilter> json_filters;
 
   // sorting — only structural columns: "seq" or "init_time"
   std::string order_by = "init_time";
