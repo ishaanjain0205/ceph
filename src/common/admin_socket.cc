@@ -14,6 +14,8 @@
  */
 
 #include "common/admin_socket.h"
+#include "common/Clock.h"
+#include "common/LogEntry.h"
 
 #include <poll.h>
 #include <signal.h>
@@ -580,9 +582,19 @@ void AdminSocket::execute_command(
     assert(retval == 0);
   }
 
+  // Dispatch-time audit: only start_time set, all other optionals null.
+  const uint32_t start_time = ceph_clock_now().sec();
+  AdminCmdAuditEntry start_audit_entry(prefix, cmdmap,
+                                       std::nullopt,
+                                       std::nullopt,
+                                       start_time,
+                                       std::nullopt);
+  ldout(m_cct, 10) << start_audit_entry.get_human_log_msg() << dendl;
+
   hook->call_async(
     prefix, cmdmap, f, inbl,
-    [f, output, on_finish, m_cct=m_cct](int r, std::string_view err, bufferlist& out) {
+    [f, output, on_finish, m_cct=m_cct,
+     prefix, cmdmap, start_time](int r, std::string_view err, bufferlist& out) {
       // handle either existing output in bufferlist *or* via formatter
       ldout(m_cct, 10) << __func__ << ": command completed with result " << r << dendl;
       if (auto* jff = dynamic_cast<JSONFormatterFile*>(f); jff != nullptr) {
@@ -604,6 +616,18 @@ void AdminSocket::execute_command(
         ldout(m_cct, 25) << __func__ << ": out is empty, dumping formatter" << dendl;
         f->flush(out);
       }
+
+      // Completion-time audit: all fields populated.
+      const uint32_t end_time = ceph_clock_now().sec();
+      std::optional<std::string> error;
+      if (!err.empty()) {
+        error = std::string(err);
+      }
+      AdminCmdAuditEntry end_audit_entry(prefix, cmdmap, r,
+                                         std::move(error),
+                                         start_time, end_time);
+      ldout(m_cct, 10) << end_audit_entry.get_human_log_msg() << dendl;
+
       delete f;
       on_finish(r, err, out);
     });
