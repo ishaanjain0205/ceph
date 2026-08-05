@@ -200,6 +200,8 @@ void LogMsg::encode(bufferlist& bl, uint64_t features) const
   encode(cmd_args, bl);
   encode(cmd_state, bl);
   encode(cmd_retval, bl);
+  encode(json_dump, bl);
+  encode(audit_channel, bl);
   ENCODE_FINISH(bl);
 }
 
@@ -213,6 +215,8 @@ void LogMsg::decode(bufferlist::const_iterator& p)
   decode(cmd_args, p);
   decode(cmd_state, p);
   decode(cmd_retval, p);
+  decode(json_dump, p);
+  decode(audit_channel, p);
   DECODE_FINISH(p);
 }
 

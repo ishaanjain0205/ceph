@@ -16,6 +16,7 @@
 #include "common/admin_socket.h"
 #include "common/Clock.h"
 #include "common/LogEntry.h"
+#include "common/JSONFormatter.h"
 
 #include <poll.h>
 #include <signal.h>
@@ -591,10 +592,35 @@ void AdminSocket::execute_command(
                                        std::nullopt);
   ldout(m_cct, 10) << start_audit_entry.get_human_log_msg() << dendl;
 
+  if (audit_clog) {
+    LogMsg dispatch_msg{};
+    dispatch_msg.cmd = prefix;
+    dispatch_msg.cmd_args = AdminCmdAuditEntry::build_cmd_args(cmdmap);
+    dispatch_msg.cmd_state = "dispatch";
+    dispatch_msg.cmd_retval = 0;
+    dispatch_msg.audit_channel = "admin_socket_cmd";
+    {
+      ceph::JSONFormatter f;
+      f.open_object_section("");
+      f.dump_stream("name") << dispatch_msg.name;
+      f.dump_stream("addrs") << dispatch_msg.addrs;
+      f.dump_stream("entity_name") << dispatch_msg.entity_name;
+      f.dump_string("cmd", dispatch_msg.cmd);
+      f.dump_string("cmd_args", dispatch_msg.cmd_args);
+      f.dump_string("cmd_state", dispatch_msg.cmd_state);
+      f.dump_int("cmd_retval", dispatch_msg.cmd_retval);
+      f.close_section();
+      std::ostringstream ss;
+      f.flush(ss);
+      dispatch_msg.json_dump = ss.str();
+    }
+    audit_clog->info(std::move(dispatch_msg));
+  }
+
   hook->call_async(
     prefix, cmdmap, f, inbl,
     [f, output, on_finish, m_cct=m_cct,
-     prefix, cmdmap, start_time](int r, std::string_view err, bufferlist& out) {
+     prefix, cmdmap, start_time, audit_clog=audit_clog](int r, std::string_view err, bufferlist& out) {
       // handle either existing output in bufferlist *or* via formatter
       ldout(m_cct, 10) << __func__ << ": command completed with result " << r << dendl;
       if (auto* jff = dynamic_cast<JSONFormatterFile*>(f); jff != nullptr) {
@@ -627,6 +653,32 @@ void AdminSocket::execute_command(
                                          std::move(error),
                                          start_time, end_time);
       ldout(m_cct, 10) << end_audit_entry.get_human_log_msg() << dendl;
+
+      if (audit_clog) {
+        LogMsg finish_msg{};
+        finish_msg.cmd = prefix;
+        finish_msg.cmd_args = AdminCmdAuditEntry::build_cmd_args(cmdmap);
+        finish_msg.cmd_state = "finished";
+        finish_msg.cmd_retval = r;
+        finish_msg.audit_channel = "admin_socket_cmd";
+        {
+          ceph::JSONFormatter f;
+          f.open_object_section("");
+          f.dump_stream("name") << finish_msg.name;
+          f.dump_stream("addrs") << finish_msg.addrs;
+          f.dump_stream("entity_name") << finish_msg.entity_name;
+          f.dump_string("cmd", finish_msg.cmd);
+          f.dump_string("cmd_args", finish_msg.cmd_args);
+          f.dump_string("cmd_state", finish_msg.cmd_state);
+          f.dump_int("cmd_retval", finish_msg.cmd_retval);
+          f.dump_string("audit_channel", finish_msg.audit_channel);
+          f.close_section();
+          std::ostringstream ss;
+          f.flush(ss);
+          finish_msg.json_dump = ss.str();
+        }
+        audit_clog->info(std::move(finish_msg));
+      }
 
       delete f;
       on_finish(r, err, out);

@@ -178,6 +178,7 @@ void Monitor::C_Command::_finish(int r) {
         msg.cmd_args = "";
         msg.cmd_state = "finished";
         msg.cmd_retval = r;
+        msg.audit_channel = "mon_admin_socket_cmd";
       } else {
         ss << "session dropped for command";
       }
@@ -1058,6 +1059,7 @@ int Monitor::preinit()
 
   admin_hook = new AdminHook(this);
   AdminSocket* admin_socket = cct->get_admin_socket();
+  admin_socket->set_audit_clog(audit_clog);
 
   // unlock while registering to avoid mon_lock -> admin socket lock dependency.
   l.unlock();
@@ -3739,6 +3741,7 @@ void Monitor::handle_command(MonOpRequestRef op)
   msg.cmd = oss.str();
   msg.cmd_args = "";
   msg.cmd_retval = 0;
+  msg.audit_channel = "mon_admin_socket_cmd";
 
   if (!_allowed_command(session, service, prefix, cmdmap,
                         param_str_map, mon_cmd)) {

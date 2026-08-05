@@ -124,6 +124,8 @@ struct LogMsg {
   std::string cmd_args;
   std::string cmd_state;
   int cmd_retval;
+  std::string json_dump;
+  std::string audit_channel;
 
   void encode(bufferlist& bl, uint64_t features) const;
   void decode(bufferlist::const_iterator& p);
@@ -156,8 +158,9 @@ public:
   const std::string& get_human_log_msg() const    { return human_log_msg_; }
   const std::string& get_json_audit_entry() const { return json_audit_entry_; }
 
-private:
   static std::string build_cmd_args(const cmdmap_t& cmdmap);
+
+private:
   std::string to_human_log_msg() const;
   std::string to_json_audit_entry() const;
 
